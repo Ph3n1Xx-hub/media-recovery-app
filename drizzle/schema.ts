@@ -25,4 +25,19 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
+// Tabela de histórico de downloads
+export const downloads = mysqlTable("downloads", {
+  id: int("id").autoincrement().primaryKey(),
+  sessionId: varchar("sessionId", { length: 128 }).notNull(), // identificador de sessão anônima
+  url: text("url").notNull(),
+  title: text("title"),
+  thumbnail: text("thumbnail"),
+  platform: varchar("platform", { length: 64 }),
+  format: varchar("format", { length: 32 }),
+  duration: int("duration"),
+  status: mysqlEnum("status", ["pending", "completed", "error"]).default("completed").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Download = typeof downloads.$inferSelect;
+export type InsertDownload = typeof downloads.$inferInsert;

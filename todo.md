@@ -17,3 +17,14 @@
 - [x] Atualizar título HTML para VideoDown
 - [x] Escrever testes vitest para routers de download e auth
 - [x] Todos os testes passando (3/3)
+
+## Próximos Passos
+
+- [x] Histórico de downloads: tabela `downloads` no banco de dados
+- [x] Histórico de downloads: router tRPC (salvar + listar por sessão/IP)
+- [x] Histórico de downloads: seção de histórico na interface
+- [x] Barra de progresso real: endpoint SSE no Express para progresso de download
+- [x] Barra de progresso real: componente de progresso animado no frontend
+- [x] Barra de progresso real: download via proxy do servidor com progresso em %
+- [x] README: renomear de MediaRecover para VideoDown
+- [x] README: atualizar instruções com yt-dlp e stack completa
