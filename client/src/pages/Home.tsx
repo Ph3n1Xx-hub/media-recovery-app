@@ -2,268 +2,354 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Download, Zap, Globe, CheckCircle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Separator } from "@/components/ui/separator";
+import { trpc } from "@/lib/trpc";
+import { toast } from "sonner";
+import {
+  Download, Zap, Globe, Music, Video, Clock, Eye,
+  AlertCircle, CheckCircle2, Loader2, ArrowDown
+} from "lucide-react";
 
-/**
- * MediaRecover - Home Page
- * Design: Sophisticated Gradient
- * Paleta: Deep Blue (oklch 0.45 0.15 260) + Copper Accent (oklch 0.65 0.12 45)
- */
+const PRESET_FORMATS = [
+  { id: "mp4-best",   label: "MP4 — Melhor qualidade",   icon: Video,  ext: "mp4" },
+  { id: "mp4-1080",   label: "MP4 — 1080p Full HD",       icon: Video,  ext: "mp4" },
+  { id: "mp4-720",    label: "MP4 — 720p HD",             icon: Video,  ext: "mp4" },
+  { id: "mp4-480",    label: "MP4 — 480p",                icon: Video,  ext: "mp4" },
+  { id: "mp4-360",    label: "MP4 — 360p",                icon: Video,  ext: "mp4" },
+  { id: "mp3",        label: "MP3 — Áudio",               icon: Music,  ext: "mp3" },
+  { id: "m4a",        label: "M4A — Áudio AAC",           icon: Music,  ext: "m4a" },
+  { id: "webm",       label: "WebM — Vídeo",              icon: Video,  ext: "webm" },
+  { id: "audio-best", label: "Áudio — Melhor qualidade",  icon: Music,  ext: "m4a" },
+];
+
+function formatDuration(seconds: number): string {
+  if (!seconds) return "—";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function formatViews(n: number): string {
+  if (!n) return "—";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return String(n);
+}
 
 export default function Home() {
   const [url, setUrl] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [inputUrl, setInputUrl] = useState("");
+  const [selectedFormat, setSelectedFormat] = useState("mp4-best");
+  const [downloading, setDownloading] = useState(false);
 
-  const handleDownload = () => {
-    if (!url.trim()) {
-      alert("Por favor, insira um URL válido");
-      return;
+  // Query de info do vídeo (só dispara quando url está preenchida)
+  const infoQuery = trpc.download.getInfo.useQuery(
+    { url },
+    {
+      enabled: !!url,
+      retry: false,
+      refetchOnWindowFocus: false,
     }
-    setLoading(true);
-    // Simular processamento
-    setTimeout(() => {
-      setLoading(false);
-      alert("Download iniciado: " + url);
-    }, 2000);
+  );
+
+  // Mutation para obter link de download
+  const downloadMutation = trpc.download.getDownloadLink.useMutation({
+    onSuccess: (data) => {
+      setDownloading(false);
+      // Abre o link direto no navegador para download
+      const a = document.createElement("a");
+      a.href = data.streamUrl;
+      a.download = data.filename;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      if (data.audioUrl) {
+        toast.info("Este formato tem vídeo e áudio separados. O áudio será baixado em seguida.", { duration: 5000 });
+        setTimeout(() => {
+          const b = document.createElement("a");
+          b.href = data.audioUrl!;
+          b.download = data.filename.replace(/\.[^.]+$/, "_audio.m4a");
+          b.target = "_blank";
+          b.rel = "noopener noreferrer";
+          document.body.appendChild(b);
+          b.click();
+          document.body.removeChild(b);
+        }, 1500);
+      } else {
+        toast.success("Download iniciado com sucesso!");
+      }
+    },
+    onError: (err) => {
+      setDownloading(false);
+      toast.error(err.message || "Erro ao iniciar o download.");
+    },
+  });
+
+  const handleSearch = () => {
+    const trimmed = inputUrl.trim();
+    if (!trimmed) { toast.warning("Cole um link válido antes de continuar."); return; }
+    setUrl(trimmed);
   };
 
+  const handleDownload = () => {
+    if (!url) return;
+    setDownloading(true);
+    downloadMutation.mutate({ url, format: selectedFormat });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") handleSearch();
+  };
+
+  const info = infoQuery.data;
+  const isLoading = infoQuery.isLoading;
+  const isError = infoQuery.isError;
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-secondary">
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-secondary/30">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-border">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+      <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-border shadow-sm">
+        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img
-              src="https://d2xsxph8kpxj0f.cloudfront.net/310419663029707363/5ggoxruNcFzBC7FRHXTC3Z/logo-mediarecovery-mnJYCeDWQvXUndW8yGUGAV.webp"
-              alt="MediaRecover"
-              className="w-8 h-8"
-            />
-            <span className="text-xl font-bold text-foreground">MediaRecover</span>
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-md">
+              <ArrowDown className="w-5 h-5 text-white" />
+            </div>
+            <span className="text-xl font-bold text-foreground tracking-tight">VideoDown</span>
           </div>
-          <nav className="hidden md:flex gap-8">
-            <a href="#features" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-              Recursos
-            </a>
-            <a href="#how-it-works" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-              Como Funciona
-            </a>
-            <a href="#faq" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-              FAQ
-            </a>
+          <nav className="hidden md:flex gap-6 text-sm text-muted-foreground">
+            <a href="#como-funciona" className="hover:text-foreground transition-colors">Como Funciona</a>
+            <a href="#plataformas" className="hover:text-foreground transition-colors">Plataformas</a>
           </nav>
         </div>
       </header>
 
-      {/* Hero Section */}
-      <section className="relative overflow-hidden py-20 md:py-32">
-        <div className="absolute inset-0 opacity-30">
-          <div className="absolute top-20 right-10 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
-          <div className="absolute bottom-20 left-10 w-72 h-72 bg-accent/10 rounded-full blur-3xl" />
+      {/* Hero */}
+      <section className="relative overflow-hidden pt-20 pb-16 md:pt-28 md:pb-24">
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-10 right-0 w-[500px] h-[500px] bg-primary/5 rounded-full blur-3xl" />
+          <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-accent/5 rounded-full blur-3xl" />
         </div>
 
-        <div className="container mx-auto px-4 relative z-10">
-          <div className="grid md:grid-cols-2 gap-12 items-center">
-            {/* Left: Content */}
-            <div className="space-y-8">
-              <div className="space-y-4">
-                <h1 className="text-5xl md:text-6xl font-bold text-foreground leading-tight">
-                  Recupere qualquer
-                  <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent"> vídeo</span>
-                  em segundos
-                </h1>
-                <p className="text-lg text-muted-foreground leading-relaxed">
-                  Baixe vídeos e áudios de YouTube, Instagram, TikTok, Twitter e mais plataformas. Simples, rápido e seguro.
-                </p>
-              </div>
+        <div className="max-w-3xl mx-auto px-4 text-center relative z-10">
+          <Badge className="mb-6 bg-primary/10 text-primary border-primary/20 hover:bg-primary/15">
+            yt-dlp · 1000+ plataformas suportadas
+          </Badge>
+          <h1 className="text-5xl md:text-6xl font-bold text-foreground leading-tight mb-5">
+            Baixe qualquer{" "}
+            <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              vídeo
+            </span>{" "}
+            agora
+          </h1>
+          <p className="text-lg text-muted-foreground mb-10 max-w-xl mx-auto leading-relaxed">
+            Cole o link do YouTube, Instagram, TikTok, Twitter, Facebook e muito mais.
+            Escolha o formato e baixe gratuitamente.
+          </p>
 
-              {/* Input Section */}
-              <div className="space-y-4">
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Cole o link do vídeo aqui..."
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    className="flex-1 px-4 py-3 rounded-lg border-border bg-white text-foreground placeholder:text-muted-foreground"
+          {/* Input principal */}
+          <div className="flex gap-2 max-w-2xl mx-auto mb-3">
+            <Input
+              placeholder="https://www.youtube.com/watch?v=..."
+              value={inputUrl}
+              onChange={(e) => setInputUrl(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="flex-1 h-12 text-base bg-white border-border shadow-sm"
+            />
+            <Button
+              onClick={handleSearch}
+              disabled={isLoading}
+              className="h-12 px-6 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-md active:scale-95 transition-all"
+            >
+              {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Analisar"}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            YouTube · Instagram · TikTok · Twitter · Facebook · Vimeo · Twitch · SoundCloud e mais
+          </p>
+        </div>
+      </section>
+
+      {/* Resultado da análise */}
+      {url && (
+        <section className="max-w-3xl mx-auto px-4 pb-16">
+          {isLoading && (
+            <Card className="p-8 text-center border border-border shadow-sm">
+              <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-3" />
+              <p className="text-muted-foreground font-medium">Analisando o link...</p>
+              <p className="text-sm text-muted-foreground mt-1">Isso pode levar alguns segundos</p>
+            </Card>
+          )}
+
+          {isError && (
+            <Card className="p-6 border border-destructive/30 bg-destructive/5 shadow-sm">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-semibold text-destructive">Não foi possível analisar o link</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {infoQuery.error?.message || "Verifique se o link é válido e tente novamente."}
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {info && !isLoading && (
+            <Card className="overflow-hidden border border-border shadow-md">
+              {/* Thumbnail + info */}
+              <div className="flex gap-4 p-5 bg-white">
+                {info.thumbnail && (
+                  <img
+                    src={info.thumbnail}
+                    alt={info.title}
+                    className="w-36 h-24 object-cover rounded-lg shrink-0 shadow-sm"
                   />
-                  <Button
-                    onClick={handleDownload}
-                    disabled={loading}
-                    className="px-8 py-3 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-lg transition-all duration-200 hover:shadow-lg active:scale-95"
-                  >
-                    {loading ? "Processando..." : "Baixar"}
-                  </Button>
+                )}
+                <div className="flex-1 min-w-0">
+                  <h2 className="font-semibold text-foreground text-base leading-snug line-clamp-2 mb-2">
+                    {info.title}
+                  </h2>
+                  <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+                    {info.uploader && (
+                      <span className="flex items-center gap-1">
+                        <Globe className="w-3.5 h-3.5" /> {info.uploader}
+                      </span>
+                    )}
+                    {info.duration > 0 && (
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" /> {formatDuration(info.duration)}
+                      </span>
+                    )}
+                    {info.viewCount > 0 && (
+                      <span className="flex items-center gap-1">
+                        <Eye className="w-3.5 h-3.5" /> {formatViews(info.viewCount)} views
+                      </span>
+                    )}
+                    <Badge variant="secondary" className="text-xs">{info.platform}</Badge>
+                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  ✓ Compatível com YouTube, Instagram, TikTok, Twitter e mais
+              </div>
+
+              <Separator />
+
+              {/* Seleção de formato */}
+              <div className="p-5 bg-secondary/20">
+                <p className="text-sm font-semibold text-foreground mb-3">Escolha o formato:</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-5">
+                  {PRESET_FORMATS.map((fmt) => {
+                    const Icon = fmt.icon;
+                    const isSelected = selectedFormat === fmt.id;
+                    return (
+                      <button
+                        key={fmt.id}
+                        onClick={() => setSelectedFormat(fmt.id)}
+                        className={`flex items-center gap-3 px-4 py-3 rounded-lg border text-sm font-medium transition-all duration-150 text-left ${
+                          isSelected
+                            ? "border-primary bg-primary/10 text-primary shadow-sm"
+                            : "border-border bg-white text-foreground hover:border-primary/50 hover:bg-primary/5"
+                        }`}
+                      >
+                        <Icon className={`w-4 h-4 shrink-0 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
+                        <span>{fmt.label}</span>
+                        {isSelected && <CheckCircle2 className="w-4 h-4 ml-auto text-primary" />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <Button
+                  onClick={handleDownload}
+                  disabled={downloading}
+                  className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-base shadow-md active:scale-[0.99] transition-all"
+                >
+                  {downloading ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                      Preparando download...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-5 h-5 mr-2" />
+                      Baixar agora
+                    </>
+                  )}
+                </Button>
+                <p className="text-xs text-muted-foreground text-center mt-2">
+                  O download será iniciado diretamente no seu navegador
                 </p>
               </div>
+            </Card>
+          )}
+        </section>
+      )}
 
-              {/* Stats */}
-              <div className="grid grid-cols-3 gap-4 pt-8">
-                <div className="space-y-1">
-                  <p className="text-2xl font-bold text-primary">10M+</p>
-                  <p className="text-sm text-muted-foreground">Downloads</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-2xl font-bold text-primary">50+</p>
-                  <p className="text-sm text-muted-foreground">Plataformas</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-2xl font-bold text-primary">24/7</p>
-                  <p className="text-sm text-muted-foreground">Disponível</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Right: Hero Image */}
-            <div className="hidden md:flex justify-center items-center">
-              <img
-                src="https://d2xsxph8kpxj0f.cloudfront.net/310419663029707363/5ggoxruNcFzBC7FRHXTC3Z/hero-media-recovery-nTjcQfV6NpDzN9Tawu5fAq.webp"
-                alt="Media Recovery Illustration"
-                className="w-full max-w-md drop-shadow-2xl"
-              />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Features Section */}
-      <section id="features" className="py-20 md:py-32 bg-white">
-        <div className="container mx-auto px-4">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl md:text-5xl font-bold text-foreground mb-4">Recursos Poderosos</h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Tudo que você precisa para recuperar e gerenciar suas mídias favoritas
-            </p>
-          </div>
-
+      {/* Como funciona */}
+      <section id="como-funciona" className="py-20 bg-white border-t border-border">
+        <div className="max-w-4xl mx-auto px-4">
+          <h2 className="text-3xl font-bold text-foreground text-center mb-12">Como Funciona</h2>
           <div className="grid md:grid-cols-3 gap-8">
-            {/* Feature 1 */}
-            <Card className="p-8 border border-border hover:shadow-lg transition-all duration-300 hover:border-accent/50">
-              <div className="mb-6">
-                <img
-                  src="https://d2xsxph8kpxj0f.cloudfront.net/310419663029707363/5ggoxruNcFzBC7FRHXTC3Z/feature-download-LqkNeLPMnmzi7QDhTrXqsv.webp"
-                  alt="Download"
-                  className="w-16 h-16 mx-auto"
-                />
-              </div>
-              <h3 className="text-xl font-semibold text-foreground mb-3 text-center">Download Rápido</h3>
-              <p className="text-muted-foreground text-center">
-                Baixe vídeos em alta qualidade em segundos. Suporte para múltiplas resoluções e formatos.
-              </p>
-            </Card>
-
-            {/* Feature 2 */}
-            <Card className="p-8 border border-border hover:shadow-lg transition-all duration-300 hover:border-accent/50">
-              <div className="mb-6">
-                <img
-                  src="https://d2xsxph8kpxj0f.cloudfront.net/310419663029707363/5ggoxruNcFzBC7FRHXTC3Z/feature-platforms-8f2SDL3R6xG74WuszFnkfy.webp"
-                  alt="Platforms"
-                  className="w-16 h-16 mx-auto"
-                />
-              </div>
-              <h3 className="text-xl font-semibold text-foreground mb-3 text-center">Múltiplas Plataformas</h3>
-              <p className="text-muted-foreground text-center">
-                YouTube, Instagram, TikTok, Twitter, Facebook e mais. Uma ferramenta para todas.
-              </p>
-            </Card>
-
-            {/* Feature 3 */}
-            <Card className="p-8 border border-border hover:shadow-lg transition-all duration-300 hover:border-accent/50">
-              <div className="mb-6">
-                <img
-                  src="https://d2xsxph8kpxj0f.cloudfront.net/310419663029707363/5ggoxruNcFzBC7FRHXTC3Z/feature-speed-UuHS4S9FSvNkSWkNWY9jHY.webp"
-                  alt="Speed"
-                  className="w-16 h-16 mx-auto"
-                />
-              </div>
-              <h3 className="text-xl font-semibold text-foreground mb-3 text-center">Ultra Rápido</h3>
-              <p className="text-muted-foreground text-center">
-                Processamento instantâneo com servidores globais. Sem esperas, sem complicações.
-              </p>
-            </Card>
-          </div>
-        </div>
-      </section>
-
-      {/* How It Works */}
-      <section id="how-it-works" className="py-20 md:py-32 bg-secondary/30">
-        <div className="container mx-auto px-4">
-          <h2 className="text-4xl md:text-5xl font-bold text-foreground text-center mb-16">Como Funciona</h2>
-
-          <div className="grid md:grid-cols-4 gap-8 max-w-4xl mx-auto">
             {[
-              { step: "1", title: "Cole o Link", desc: "Insira a URL do vídeo" },
-              { step: "2", title: "Selecione Qualidade", desc: "Escolha a resolução desejada" },
-              { step: "3", title: "Baixe", desc: "Clique para iniciar o download" },
-              { step: "4", title: "Pronto!", desc: "Arquivo salvo no seu dispositivo" },
-            ].map((item, idx) => (
-              <div key={idx} className="relative">
-                <div className="flex flex-col items-center text-center">
-                  <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-white font-bold text-lg mb-4">
-                    {item.step}
-                  </div>
-                  <h3 className="font-semibold text-foreground mb-2">{item.title}</h3>
-                  <p className="text-sm text-muted-foreground">{item.desc}</p>
+              { step: "1", icon: Globe, title: "Cole o link", desc: "Insira a URL de qualquer vídeo de plataformas suportadas." },
+              { step: "2", icon: Zap, title: "Analise", desc: "Clique em Analisar. O VideoDown busca as informações e formatos disponíveis." },
+              { step: "3", icon: Download, title: "Baixe", desc: "Escolha o formato desejado e clique em Baixar agora." },
+            ].map(({ step, icon: Icon, title, desc }) => (
+              <div key={step} className="text-center">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center mx-auto mb-4 shadow-md">
+                  <Icon className="w-6 h-6 text-white" />
                 </div>
-                {idx < 3 && (
-                  <div className="hidden md:block absolute top-6 left-[60%] w-[40%] h-0.5 bg-gradient-to-r from-primary/50 to-transparent" />
-                )}
+                <h3 className="font-semibold text-foreground mb-2">{title}</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{desc}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-20 md:py-32 bg-gradient-to-r from-primary/5 to-accent/5">
-        <div className="container mx-auto px-4 text-center">
-          <h2 className="text-4xl md:text-5xl font-bold text-foreground mb-6">Comece Agora</h2>
-          <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
-            Sem cadastro, sem anúncios, sem limites. Recupere suas mídias favoritas em segundos.
+      {/* Plataformas suportadas */}
+      <section id="plataformas" className="py-20 bg-secondary/20 border-t border-border">
+        <div className="max-w-4xl mx-auto px-4 text-center">
+          <h2 className="text-3xl font-bold text-foreground mb-4">Plataformas Suportadas</h2>
+          <p className="text-muted-foreground mb-10">
+            Powered by <strong>yt-dlp</strong> — mais de 1.000 plataformas suportadas
           </p>
-          <Button className="px-8 py-4 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-lg text-lg transition-all duration-200 hover:shadow-lg active:scale-95">
-            Começar Agora
-          </Button>
+          <div className="flex flex-wrap justify-center gap-3">
+            {["YouTube", "Instagram", "TikTok", "Twitter / X", "Facebook", "Vimeo", "Twitch", "SoundCloud",
+              "Reddit", "Dailymotion", "Pinterest", "LinkedIn", "Bilibili", "Rumble", "Odysee", "e muito mais..."].map((p) => (
+              <Badge key={p} variant="secondary" className="text-sm px-4 py-1.5 bg-white border border-border shadow-sm">
+                {p}
+              </Badge>
+            ))}
+          </div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="bg-foreground/5 border-t border-border py-12">
-        <div className="container mx-auto px-4">
-          <div className="grid md:grid-cols-4 gap-8 mb-8">
-            <div>
-              <h4 className="font-semibold text-foreground mb-4">MediaRecover</h4>
-              <p className="text-sm text-muted-foreground">A ferramenta confiável para recuperar qualquer mídia.</p>
+      <footer className="py-10 border-t border-border bg-white">
+        <div className="max-w-4xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center">
+              <ArrowDown className="w-4 h-4 text-white" />
             </div>
-            <div>
-              <h4 className="font-semibold text-foreground mb-4">Produto</h4>
-              <ul className="space-y-2 text-sm text-muted-foreground">
-                <li><a href="#" className="hover:text-foreground transition-colors">Recursos</a></li>
-                <li><a href="#" className="hover:text-foreground transition-colors">Preços</a></li>
-                <li><a href="#" className="hover:text-foreground transition-colors">API</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-semibold text-foreground mb-4">Legal</h4>
-              <ul className="space-y-2 text-sm text-muted-foreground">
-                <li><a href="#" className="hover:text-foreground transition-colors">Privacidade</a></li>
-                <li><a href="#" className="hover:text-foreground transition-colors">Termos</a></li>
-                <li><a href="#" className="hover:text-foreground transition-colors">Contato</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-semibold text-foreground mb-4">Redes Sociais</h4>
-              <ul className="space-y-2 text-sm text-muted-foreground">
-                <li><a href="#" className="hover:text-foreground transition-colors">Twitter</a></li>
-                <li><a href="#" className="hover:text-foreground transition-colors">GitHub</a></li>
-                <li><a href="#" className="hover:text-foreground transition-colors">Discord</a></li>
-              </ul>
-            </div>
+            <span className="font-bold text-foreground">VideoDown</span>
           </div>
-          <div className="border-t border-border pt-8 text-center text-sm text-muted-foreground">
-            <p>&copy; 2026 MediaRecover. Todos os direitos reservados.</p>
-          </div>
+          <p className="text-sm text-muted-foreground text-center">
+            Powered by yt-dlp · Use apenas para conteúdo que você tem direito de baixar
+          </p>
+          <a
+            href="https://github.com/Ph3n1Xx-hub/media-recovery-app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            GitHub →
+          </a>
         </div>
       </footer>
     </div>
