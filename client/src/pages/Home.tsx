@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -71,9 +71,9 @@ function timeAgo(date: Date | string): string {
 
 type DownloadState =
   | { phase: "idle" }
-  | { phase: "analyzing" }
-  | { phase: "downloading"; percent: number; received: number; total: number; filename: string }
-  | { phase: "done"; filename: string }
+  | { phase: "preparing" }
+  | { phase: "downloading"; received: number; total: number; percent: number }
+  | { phase: "done" }
   | { phase: "error"; message: string };
 
 // ─── Componente principal ────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ export default function Home() {
   const [selectedFormat, setSelectedFormat] = useState("mp4-best");
   const [dlState, setDlState] = useState<DownloadState>({ phase: "idle" });
   const [showHistory, setShowHistory] = useState(false);
-  const sseRef = useRef<EventSource | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // ── Queries / Mutations ──────────────────────────────────────────────────
 
@@ -120,51 +120,68 @@ export default function Home() {
     if (e.key === "Enter") handleSearch();
   };
 
-  const handleDownload = () => {
-    if (!url || dlState.phase === "downloading") return;
+  const handleDownload = async () => {
+    if (!url || dlState.phase === "downloading" || dlState.phase === "preparing") return;
 
-    // Fecha SSE anterior se existir
-    sseRef.current?.close();
+    // Cancela download anterior se existir
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    setDlState({ phase: "analyzing" });
+    setDlState({ phase: "preparing" });
+    toast.info("Preparando download...", { duration: 3000 });
 
-    const params = new URLSearchParams({ url, format: selectedFormat, sessionId });
-    const sse = new EventSource(`/api/download-stream?${params}`);
-    sseRef.current = sse;
+    try {
+      const params = new URLSearchParams({ url, format: selectedFormat });
+      const downloadUrl = `/api/download-file?${params}`;
 
-    let filename = "videodown";
-    let totalSize = 0;
-    const chunks: Uint8Array[] = [];
+      // Usa fetch com ReadableStream para mostrar progresso real
+      const response = await fetch(downloadUrl, { signal: controller.signal });
 
-    sse.addEventListener("status", (e) => {
-      const d = JSON.parse(e.data);
-      toast.info(d.message, { duration: 2000 });
-    });
+      if (!response.ok) {
+        let errMsg = "Erro ao iniciar o download.";
+        try {
+          const errData = await response.json();
+          errMsg = errData.error || errMsg;
+        } catch {}
+        throw new Error(errMsg);
+      }
 
-    sse.addEventListener("start", (e) => {
-      const d = JSON.parse(e.data);
-      filename = d.filename;
-      totalSize = d.total || 0;
-      setDlState({ phase: "downloading", percent: 0, received: 0, total: totalSize, filename });
-    });
+      const contentLength = response.headers.get("content-length");
+      const total = contentLength ? parseInt(contentLength, 10) : 0;
+      const filename = response.headers.get("x-filename") ||
+        response.headers.get("content-disposition")?.match(/filename="?([^"]+)"?/)?.[1] ||
+        `videodown.${selectedFormat.startsWith("mp3") ? "mp3" : selectedFormat.startsWith("m4a") ? "m4a" : "mp4"}`;
 
-    sse.addEventListener("progress", (e) => {
-      const d = JSON.parse(e.data);
-      setDlState({
-        phase: "downloading",
-        percent: d.percent >= 0 ? d.percent : 0,
-        received: d.received,
-        total: d.total,
-        filename,
-      });
-    });
+      // Lê o stream com progresso
+      const reader = response.body!.getReader();
+      const chunks: Uint8Array<ArrayBuffer>[] = [];
+      let received = 0;
 
-    sse.addEventListener("done", (e) => {
-      const d = JSON.parse(e.data);
-      sse.close();
-      sseRef.current = null;
-      setDlState({ phase: "done", filename: d.filename });
-      toast.success("Download concluído!");
+      setDlState({ phase: "downloading", received: 0, total, percent: 0 });
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        const percent = total > 0 ? Math.floor((received / total) * 100) : 0;
+        setDlState({ phase: "downloading", received, total, percent });
+      }
+
+      // Cria blob e dispara download no navegador
+      const blob = new Blob(chunks);
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+
+      setDlState({ phase: "done" });
+      toast.success(`Download concluído: ${filename}`);
 
       // Salva no histórico
       if (info) {
@@ -180,34 +197,20 @@ export default function Home() {
         });
         if (showHistory) historyQuery.refetch();
       }
-    });
 
-    sse.addEventListener("error", (e: MessageEvent) => {
-      sse.close();
-      sseRef.current = null;
-      let msg = "Erro ao baixar o vídeo.";
-      try { msg = JSON.parse(e.data).message || msg; } catch {}
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      const msg = err?.message || "Erro inesperado ao baixar o vídeo.";
       setDlState({ phase: "error", message: msg });
       toast.error(msg);
-    });
-
-    // Fallback: erro de conexão SSE
-    sse.onerror = () => {
-      if (dlState.phase !== "done") {
-        sse.close();
-        sseRef.current = null;
-        setDlState({ phase: "error", message: "Conexão perdida. Tente novamente." });
-      }
-    };
+    }
   };
-
-  // Limpa SSE ao desmontar
-  useEffect(() => () => { sseRef.current?.close(); }, []);
 
   // ── Render ───────────────────────────────────────────────────────────────
 
   const isLoading = infoQuery.isLoading;
   const isError = infoQuery.isError;
+  const isDownloading = dlState.phase === "downloading" || dlState.phase === "preparing";
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-secondary/30">
@@ -341,7 +344,7 @@ export default function Home() {
                       <button
                         key={fmt.id}
                         onClick={() => setSelectedFormat(fmt.id)}
-                        disabled={dlState.phase === "downloading"}
+                        disabled={isDownloading}
                         className={`flex items-center gap-3 px-4 py-3 rounded-lg border text-sm font-medium transition-all duration-150 text-left disabled:opacity-50 ${
                           isSelected
                             ? "border-primary bg-primary/10 text-primary shadow-sm"
@@ -357,22 +360,27 @@ export default function Home() {
                 </div>
 
                 {/* Barra de progresso */}
-                {(dlState.phase === "downloading" || dlState.phase === "analyzing") && (
+                {dlState.phase === "preparing" && (
+                  <div className="space-y-2 pt-1">
+                    <p className="text-xs text-muted-foreground">Preparando o download...</p>
+                    <Progress value={undefined} className="h-2 animate-pulse" />
+                  </div>
+                )}
+
+                {dlState.phase === "downloading" && (
                   <div className="space-y-2 pt-1">
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>
-                        {dlState.phase === "analyzing"
-                          ? "Obtendo link do vídeo..."
-                          : dlState.percent >= 0
-                            ? `${dlState.percent}% — ${formatBytes(dlState.received)}${dlState.total > 0 ? ` / ${formatBytes(dlState.total)}` : ""}`
-                            : `Baixando... ${formatBytes(dlState.received)}`}
+                        {dlState.total > 0
+                          ? `${formatBytes(dlState.received)} de ${formatBytes(dlState.total)}`
+                          : `Baixando... ${formatBytes(dlState.received)}`}
                       </span>
-                      {dlState.phase === "downloading" && dlState.percent >= 0 && (
-                        <span className="font-medium text-primary">{dlState.percent}%</span>
+                      {dlState.total > 0 && (
+                        <span className="font-semibold text-primary">{dlState.percent}%</span>
                       )}
                     </div>
                     <Progress
-                      value={dlState.phase === "analyzing" ? undefined : (dlState.percent >= 0 ? dlState.percent : 50)}
+                      value={dlState.total > 0 ? dlState.percent : undefined}
                       className="h-2"
                     />
                   </div>
@@ -381,7 +389,7 @@ export default function Home() {
                 {dlState.phase === "done" && (
                   <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3">
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>Download concluído: <strong>{dlState.filename}</strong></span>
+                    <span>Download concluído! Verifique sua pasta de downloads.</span>
                   </div>
                 )}
 
@@ -394,17 +402,19 @@ export default function Home() {
 
                 <Button
                   onClick={handleDownload}
-                  disabled={dlState.phase === "downloading" || dlState.phase === "analyzing"}
+                  disabled={isDownloading}
                   className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-base shadow-md active:scale-[0.99] transition-all"
                 >
-                  {dlState.phase === "downloading" || dlState.phase === "analyzing" ? (
-                    <><Loader2 className="w-5 h-5 animate-spin mr-2" />Baixando...</>
+                  {isDownloading ? (
+                    <><Loader2 className="w-5 h-5 animate-spin mr-2" />
+                      {dlState.phase === "preparing" ? "Preparando..." : "Baixando..."}
+                    </>
                   ) : (
                     <><Download className="w-5 h-5 mr-2" />Baixar agora</>
                   )}
                 </Button>
                 <p className="text-xs text-muted-foreground text-center">
-                  O progresso é exibido em tempo real via streaming
+                  O arquivo será salvo automaticamente na sua pasta de downloads
                 </p>
               </div>
             </Card>
@@ -497,7 +507,7 @@ export default function Home() {
             {[
               { icon: Globe, title: "Cole o link", desc: "Insira a URL de qualquer vídeo de plataformas suportadas." },
               { icon: Zap, title: "Analise", desc: "Clique em Analisar. O VideoDown busca as informações e formatos disponíveis." },
-              { icon: Download, title: "Baixe com progresso", desc: "Escolha o formato e acompanhe o progresso em tempo real." },
+              { icon: Download, title: "Baixe", desc: "Escolha o formato e clique em Baixar. O arquivo vai direto para sua pasta de downloads." },
             ].map(({ icon: Icon, title, desc }) => (
               <div key={title} className="text-center">
                 <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center mx-auto mb-4 shadow-md">
